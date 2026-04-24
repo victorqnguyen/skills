@@ -1,17 +1,34 @@
-"""Lightweight connection handling for MCP servers."""
+"""Connection-only handling for MCP servers.
+
+SECURITY ARCHITECTURE: This module connects to already-running MCP servers.
+It does NOT spawn processes. Process lifecycle (starting, stopping, restarting
+MCP servers) belongs to OS-level process management: systemd, launchd, Docker,
+pm2, supervisord, etc.
+
+A communication protocol should not be a process launcher. Mixing "here's a
+shell command" with "here's a tool description the AI reads" turns every
+context injection path into an RCE vector. Separating connection from lifecycle
+eliminates the entire CVE family (14+ CVEs, 200K+ vulnerable instances as of
+April 2026) traced to StdioServerParameters spawning arbitrary subprocesses.
+
+See: OX Security advisory, April 15 2026
+     CVE-2026-30623, CVE-2026-22252, CVE-2026-22688, CVE-2026-30615, et al.
+"""
 
 from abc import ABC, abstractmethod
 from contextlib import AsyncExitStack
 from typing import Any
 
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.sse import sse_client
-from mcp.client.stdio import stdio_client
+from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 
 
 class MCPConnection(ABC):
-    """Base class for MCP server connections."""
+    """Base class for MCP server connections.
+
+    All connection types connect to already-running servers.
+    No connection type spawns a process.
+    """
 
     def __init__(self):
         self.session = None
@@ -70,35 +87,13 @@ class MCPConnection(ABC):
         return result.content
 
 
-class MCPConnectionStdio(MCPConnection):
-    """MCP connection using standard input/output."""
-
-    def __init__(self, command: str, args: list[str] = None, env: dict[str, str] = None):
-        super().__init__()
-        self.command = command
-        self.args = args or []
-        self.env = env
-
-    def _create_context(self):
-        return stdio_client(
-            StdioServerParameters(command=self.command, args=self.args, env=self.env)
-        )
-
-
-class MCPConnectionSSE(MCPConnection):
-    """MCP connection using Server-Sent Events."""
-
-    def __init__(self, url: str, headers: dict[str, str] = None):
-        super().__init__()
-        self.url = url
-        self.headers = headers or {}
-
-    def _create_context(self):
-        return sse_client(url=self.url, headers=self.headers)
-
-
 class MCPConnectionHTTP(MCPConnection):
-    """MCP connection using Streamable HTTP."""
+    """MCP connection using Streamable HTTP.
+
+    Connects to an already-running MCP server at the given URL.
+    The server must be started independently via OS process management
+    (systemd, launchd, Docker, pm2, etc).
+    """
 
     def __init__(self, url: str, headers: dict[str, str] = None):
         super().__init__()
@@ -110,42 +105,26 @@ class MCPConnectionHTTP(MCPConnection):
 
 
 def create_connection(
-    transport: str,
-    command: str = None,
-    args: list[str] = None,
-    env: dict[str, str] = None,
-    url: str = None,
+    url: str,
     headers: dict[str, str] = None,
 ) -> MCPConnection:
-    """Factory function to create the appropriate MCP connection.
+    """Create an MCP connection to an already-running server.
 
     Args:
-        transport: Connection type ("stdio", "sse", or "http")
-        command: Command to run (stdio only)
-        args: Command arguments (stdio only)
-        env: Environment variables (stdio only)
-        url: Server URL (sse and http only)
-        headers: HTTP headers (sse and http only)
+        url: Server URL (e.g., http://localhost:8080/mcp,
+             https://my-server.tailnet.ts.net/mcp)
+        headers: Optional HTTP headers for authentication
 
     Returns:
         MCPConnection instance
+
+    Example:
+        # Server started independently (systemd, launchd, Docker, etc.)
+        # MCP config contains ONLY connection targets, never shell commands.
+        async with create_connection("http://localhost:8080/mcp") as conn:
+            tools = await conn.list_tools()
+            result = await conn.call_tool("search", {"query": "test"})
     """
-    transport = transport.lower()
-
-    if transport == "stdio":
-        if not command:
-            raise ValueError("Command is required for stdio transport")
-        return MCPConnectionStdio(command=command, args=args, env=env)
-
-    elif transport == "sse":
-        if not url:
-            raise ValueError("URL is required for sse transport")
-        return MCPConnectionSSE(url=url, headers=headers)
-
-    elif transport in ["http", "streamable_http", "streamable-http"]:
-        if not url:
-            raise ValueError("URL is required for http transport")
-        return MCPConnectionHTTP(url=url, headers=headers)
-
-    else:
-        raise ValueError(f"Unsupported transport type: {transport}. Use 'stdio', 'sse', or 'http'")
+    if not url:
+        raise ValueError("URL is required. MCP servers must be running independently.")
+    return MCPConnectionHTTP(url=url, headers=headers)

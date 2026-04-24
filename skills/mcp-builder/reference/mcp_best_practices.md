@@ -22,9 +22,10 @@
 - Default to 20-50 items
 
 ### Transport
-- **Streamable HTTP**: For remote servers, multi-client scenarios
-- **stdio**: For local integrations, command-line tools
+- **Streamable HTTP**: For all servers — local and remote
 - Avoid SSE (deprecated in favor of streamable HTTP)
+- **STDIO transport is not recommended** due to process-spawning security risks.
+  See "Transport: Connection-Only Architecture" below.
 
 ---
 
@@ -105,47 +106,97 @@ Example pagination response:
 
 ---
 
-## Transport Options
+## Transport: Connection-Only Architecture
 
-### Streamable HTTP
+### Principle: Separate Connection from Lifecycle
 
-**Best for**: Remote servers, web services, multi-client scenarios
+A communication protocol should not launch processes. MCP configs should contain
+**connection targets** (URLs), never **shell commands**. Process lifecycle — starting,
+stopping, restarting MCP servers — belongs to OS-level process management tools
+that already exist and already handle permissions, sandboxing, and logging.
+
+**Why this matters**: The STDIO transport's `StdioServerParameters` takes a `command`
+field and passes it directly to `subprocess.Popen()` / `child_process.spawn()` with
+no sanitization. This single architectural decision produced 14+ CVEs, 200K+ vulnerable
+instances, and 9/11 MCP marketplace registries successfully poisoned (OX Security,
+April 2026). The attack surface for this CVE family is eliminated when the protocol stops spawning processes.
+
+### Streamable HTTP (Use This)
+
+**Best for**: All servers — local and remote
 
 **Characteristics**:
+- Connects to an already-running server at a URL
 - Bidirectional communication over HTTP
 - Supports multiple simultaneous clients
-- Can be deployed as a web service
+- Can be deployed locally or as a cloud service
 - Enables server-to-client notifications
+- **Does not spawn processes — connection only**
 
-**Use when**:
-- Serving multiple clients simultaneously
-- Deploying as a cloud service
-- Integration with web applications
+**Use for**:
+- Local development servers (http://localhost:8080/mcp)
+- Private network servers (https://my-server.tailnet.ts.net/mcp)
+- Cloud-deployed services
+- Multi-client scenarios
 
-### stdio
+### STDIO: Do Not Use for New Servers
 
-**Best for**: Local integrations, command-line tools
+**STDIO as a communication pipe** (two processes talking via stdin/stdout) is
+legitimate IPC. The problem is specifically `StdioServerParameters` acting as
+a process launcher — taking a `command` field from config and executing it.
 
-**Characteristics**:
-- Standard input/output stream communication
-- Simple setup, no network configuration needed
-- Runs as a subprocess of the client
+**If you need local IPC**: Run your server independently (launchd, systemd, Docker,
+pm2) and connect via Streamable HTTP on localhost. This gives you:
+- The same performance characteristics
+- OS-level process permissions and sandboxing for free
+- No shell command in your MCP config
+- No attack surface from config injection
 
-**Use when**:
-- Building tools for local development environments
-- Integrating with desktop applications
-- Single-user, single-session scenarios
+### Process Lifecycle Management
 
-**Note**: stdio servers should NOT log to stdout (use stderr for logging)
+MCP servers should be managed by existing OS tools:
 
-### Transport Selection
+| Platform | Tool | Example |
+|----------|------|---------|
+| **macOS** | launchd | `~/Library/LaunchAgents/com.myserver.mcp.plist` |
+| **Linux** | systemd | `/etc/systemd/user/myserver-mcp.service` |
+| **Container** | Docker | `docker run -d -p 8080:8080 myserver-mcp` |
+| **Cross-platform** | pm2 | `pm2 start server.js --name myserver-mcp` |
 
-| Criterion | stdio | Streamable HTTP |
-|-----------|-------|-----------------|
-| **Deployment** | Local | Remote |
-| **Clients** | Single | Multiple |
-| **Complexity** | Low | Medium |
-| **Real-time** | No | Yes |
+These tools provide process lifecycle management — auto-restart, logging,
+resource limits, permissions, startup ordering, and health checks — that
+MCP configs should not duplicate.
+
+### MCP Config: Before and After
+
+**Before (vulnerable):**
+```json
+{
+  "mcpServers": {
+    "my-server": {
+      "command": "npx",
+      "args": ["-y", "@my/mcp-server"],
+      "env": { "API_KEY": "..." }
+    }
+  }
+}
+```
+
+**After (connection-only):**
+```json
+{
+  "mcpServers": {
+    "my-server": {
+      "type": "http",
+      "url": "http://localhost:8080/mcp"
+    }
+  }
+}
+```
+
+The protocol becomes a protocol. The config becomes a connection string.
+The shell command moves to where it belongs — OS process management.
+The attack surface for this CVE family is eliminated.
 
 ---
 

@@ -287,50 +287,28 @@ def parse_headers(header_list: list[str]) -> dict[str, str]:
     return headers
 
 
-def parse_env_vars(env_list: list[str]) -> dict[str, str]:
-    """Parse environment variable strings in format 'KEY=VALUE' into a dictionary."""
-    env = {}
-    if not env_list:
-        return env
-
-    for env_var in env_list:
-        if "=" in env_var:
-            key, value = env_var.split("=", 1)
-            env[key.strip()] = value.strip()
-        else:
-            print(f"Warning: Ignoring malformed environment variable: {env_var}")
-    return env
-
-
 async def main():
     parser = argparse.ArgumentParser(
         description="Evaluate MCP servers using test questions",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Evaluate a local stdio MCP server
-  python evaluation.py -t stdio -c python -a my_server.py eval.xml
+  # Evaluate a local MCP server (started independently via systemd/launchd/Docker/pm2)
+  python evaluation.py -u http://localhost:8080/mcp eval.xml
 
-  # Evaluate an SSE MCP server
-  python evaluation.py -t sse -u https://example.com/mcp -H "Authorization: Bearer token" eval.xml
+  # Evaluate a remote MCP server with auth
+  python evaluation.py -u https://example.com/mcp -H "Authorization: Bearer token" eval.xml
 
-  # Evaluate an HTTP MCP server with custom model
-  python evaluation.py -t http -u https://example.com/mcp -m claude-3-5-sonnet-20241022 eval.xml
+  # Evaluate with custom model
+  python evaluation.py -u https://example.com/mcp -m claude-sonnet-4-20250514 eval.xml
         """,
     )
 
     parser.add_argument("eval_file", type=Path, help="Path to evaluation XML file")
-    parser.add_argument("-t", "--transport", choices=["stdio", "sse", "http"], default="stdio", help="Transport type (default: stdio)")
-    parser.add_argument("-m", "--model", default="claude-3-7-sonnet-20250219", help="Claude model to use (default: claude-3-7-sonnet-20250219)")
+    parser.add_argument("-m", "--model", default="claude-sonnet-4-20250514", help="Claude model to use")
 
-    stdio_group = parser.add_argument_group("stdio options")
-    stdio_group.add_argument("-c", "--command", help="Command to run MCP server (stdio only)")
-    stdio_group.add_argument("-a", "--args", nargs="+", help="Arguments for the command (stdio only)")
-    stdio_group.add_argument("-e", "--env", nargs="+", help="Environment variables in KEY=VALUE format (stdio only)")
-
-    remote_group = parser.add_argument_group("sse/http options")
-    remote_group.add_argument("-u", "--url", help="MCP server URL (sse/http only)")
-    remote_group.add_argument("-H", "--header", nargs="+", dest="headers", help="HTTP headers in 'Key: Value' format (sse/http only)")
+    parser.add_argument("-u", "--url", required=True, help="MCP server URL (server must be running independently)")
+    parser.add_argument("-H", "--header", nargs="+", dest="headers", help="HTTP headers in 'Key: Value' format")
 
     parser.add_argument("-o", "--output", type=Path, help="Output file for evaluation report (default: stdout)")
 
@@ -341,14 +319,9 @@ Examples:
         sys.exit(1)
 
     headers = parse_headers(args.headers) if args.headers else None
-    env_vars = parse_env_vars(args.env) if args.env else None
 
     try:
         connection = create_connection(
-            transport=args.transport,
-            command=args.command,
-            args=args.args,
-            env=env_vars,
             url=args.url,
             headers=headers,
         )
@@ -356,7 +329,7 @@ Examples:
         print(f"Error: {e}")
         sys.exit(1)
 
-    print(f"🔗 Connecting to MCP server via {args.transport}...")
+    print(f"🔗 Connecting to MCP server at {args.url}...")
 
     async with connection:
         print("✅ Connected successfully")

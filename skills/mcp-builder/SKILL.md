@@ -51,7 +51,7 @@ Key pages to review:
 
 **Recommended stack:**
 - **Language**: TypeScript (high-quality SDK support and good compatibility in many execution environments e.g. MCPB. Plus AI models are good at generating TypeScript code, benefiting from its broad usage, static typing and good linting tools)
-- **Transport**: Streamable HTTP for remote servers, using stateless JSON (simpler to scale and maintain, as opposed to stateful sessions and streaming responses). stdio for local servers.
+- **Transport**: Streamable HTTP for all servers — local and remote. Do not use STDIO as a process launcher. See best practices for the connection-only architecture that eliminates the 14+ CVE family from StdioServerParameters.
 
 **Load framework documentation:**
 
@@ -205,7 +205,7 @@ Load these resources as needed during development:
   - Server and tool naming conventions
   - Response format guidelines (JSON vs Markdown)
   - Pagination best practices
-  - Transport selection (streamable HTTP vs stdio)
+  - Connection-only architecture (no process spawning)
   - Security and error handling standards
 
 ### SDK Documentation (Load During Phase 1/2)
