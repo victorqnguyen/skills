@@ -51,7 +51,7 @@ Key pages to review:
 
 **Recommended stack:**
 - **Language**: TypeScript (high-quality SDK support and good compatibility in many execution environments e.g. MCPB. Plus AI models are good at generating TypeScript code, benefiting from its broad usage, static typing and good linting tools)
-- **Transport**: Streamable HTTP for all servers — local and remote. Do not use STDIO as a process launcher. See best practices for the connection-only architecture that eliminates the 14+ CVE family from StdioServerParameters.
+- **Transport**: Streamable HTTP for all servers — local and remote. MCP should own the connection layer only. Discovery belongs to registries and marketplaces, installation belongs to package managers, and lifecycle belongs to service managers. Do not use STDIO as a process launcher. See best practices for the connection-only architecture that eliminates the April 2026 CVE family rooted in `StdioServerParameters`.
 
 **Load framework documentation:**
 

@@ -108,18 +108,34 @@ Example pagination response:
 
 ## Transport: Connection-Only Architecture
 
-### Principle: Separate Connection from Lifecycle
+### Principle: Separate Discovery, Installation, Lifecycle, and Connection
 
-A communication protocol should not launch processes. MCP configs should contain
-**connection targets** (URLs), never **shell commands**. Process lifecycle — starting,
-stopping, restarting MCP servers — belongs to OS-level process management tools
-that already exist and already handle permissions, sandboxing, and logging.
+MCP should own the connection layer and nothing else. A communication protocol
+should not try to discover packages, install software, or launch processes.
+Those are separate concerns with separate trust boundaries and mature tooling.
 
-**Why this matters**: The STDIO transport's `StdioServerParameters` takes a `command`
-field and passes it directly to `subprocess.Popen()` / `child_process.spawn()` with
-no sanitization. This single architectural decision produced 14+ CVEs, 200K+ vulnerable
-instances, and 9/11 MCP marketplace registries successfully poisoned (OX Security,
-April 2026). The attack surface for this CVE family is eliminated when the protocol stops spawning processes.
+The responsibilities break down like this:
+
+- **Discovery**: finding a server belongs to package registries and marketplaces
+- **Installation**: getting server software onto a machine belongs to package managers
+- **Lifecycle**: starting, stopping, and restarting a server belongs to service managers
+- **Connection**: talking to an already-running server is MCP's job
+
+In practical terms, MCP configs should contain **connection targets** (URLs),
+never **shell commands**. Registries such as npm, PyPI, Docker Hub, or signed
+marketplaces solve discovery. Package managers such as `npm`, `brew`, `apt`,
+or Docker solve installation. Service managers such as `systemd`, `launchd`,
+Docker, or `pm2` solve lifecycle with established permission models, sandboxing,
+logging, restart policies, and health checks.
+
+**Why this matters**: The April 2026 CVE family stemmed from collapsing these
+layers into a single MCP config surface. The STDIO transport's
+`StdioServerParameters` takes a `command` field and passes it directly to
+`subprocess.Popen()` / `child_process.spawn()` with no sanitization. That
+architectural conflation produced 14+ CVEs, 200K+ vulnerable instances, and
+9/11 MCP marketplace registries successfully poisoned (OX Security, April 2026).
+The attack surface drops sharply when MCP stops spawning processes and returns to
+its proper role as a connection protocol.
 
 ### Streamable HTTP (Use This)
 
@@ -146,7 +162,8 @@ legitimate IPC. The problem is specifically `StdioServerParameters` acting as
 a process launcher — taking a `command` field from config and executing it.
 
 **If you need local IPC**: Run your server independently (launchd, systemd, Docker,
-pm2) and connect via Streamable HTTP on localhost. This gives you:
+pm2) and connect via Streamable HTTP on localhost. This keeps discovery,
+installation, lifecycle, and connection in their proper layers and gives you:
 - The same performance characteristics
 - OS-level process permissions and sandboxing for free
 - No shell command in your MCP config
@@ -166,6 +183,20 @@ MCP servers should be managed by existing OS tools:
 These tools provide process lifecycle management — auto-restart, logging,
 resource limits, permissions, startup ordering, and health checks — that
 MCP configs should not duplicate.
+
+### Discovery and Installation
+
+MCP documentation should not teach a protocol config to double as a package
+locator or installer. Discovery should happen through registries or marketplaces
+with their own trust and audit mechanisms. Installation should happen through
+package managers with established verification and update workflows.
+
+That separation matters operationally as well as conceptually:
+
+- Registries and marketplaces are where users evaluate provenance and authenticity
+- Package managers are where users control installation policy and system impact
+- Service managers are where users control runtime permissions and supervision
+- MCP is where clients connect once a server is already running
 
 ### MCP Config: Before and After
 
@@ -195,8 +226,9 @@ MCP configs should not duplicate.
 ```
 
 The protocol becomes a protocol. The config becomes a connection string.
-The shell command moves to where it belongs — OS process management.
-The attack surface for this CVE family is eliminated.
+Discovery stays with registries. Installation stays with package managers.
+Lifecycle stays with service managers. MCP stays focused on connection.
+That separation reduces both attack surface and implementation complexity.
 
 ---
 
